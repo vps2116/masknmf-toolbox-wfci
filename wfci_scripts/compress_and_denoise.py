@@ -18,10 +18,10 @@ import hydra
 
 @hydra.main()
 def compress_and_denoise(cfg: DictConfig) -> None:
-    input_file = os.path.abspath(cfg.input)
-    if not os.path.exists(input_file):
-        raise ValueError(f"the path {input_file} does not seem to exist")
-    input_file = np.load(input_file)
+    input_filepath = os.path.abspath(cfg.input)
+    if not os.path.exists(input_filepath):
+        raise ValueError(f"the path {input_filepath} does not seem to exist")
+    input_file = np.load(input_filepath)
     my_data = input_file['moco']
     my_shifts = input_file['shifts']
     max_shifts = np.ceil(np.amax(np.abs(my_shifts), axis=0))
@@ -82,7 +82,7 @@ def compress_and_denoise(cfg: DictConfig) -> None:
     np.savez(output_location,
              pmd_denoise=pmd_denoised,
              pmd_no_denoise=pmd_no_denoise,
-             raw_path=input_file)
+             raw_path=input_filepath)
     display("Results saved")
 
 

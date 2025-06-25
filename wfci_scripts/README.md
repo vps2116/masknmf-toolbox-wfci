@@ -1,5 +1,5 @@
 Usage: 
-
+Check common_commands.md for concrete examples
 To run motion correction (and crop the data around the brain to exclude empty pixels): 
 
 ```bash
