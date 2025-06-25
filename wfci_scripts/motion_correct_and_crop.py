@@ -50,7 +50,7 @@ def motion_correct_and_crop(cfg: DictConfig) -> None:
 
     display("Motion Correction")
 
-    max_rigid_shifts = [cfg.max_shifts_height, cfg.max_shifts_width]
+    max_rigid_shifts = [cfg.max_rigid_shift, cfg.max_rigid_shift]
     template = None
     rigid_strategy = masknmf.RigidMotionCorrection(max_rigid_shifts, template=template)
 
@@ -82,14 +82,13 @@ def motion_correct_and_crop(cfg: DictConfig) -> None:
 
 if __name__ == "__main__":
     config_dict = {
-        'path': '/path/to/data/',
+        'file_path': '/path/to/data/',
         'output_file': None,
         'crop_height_start': None,
         'crop_height_end': None,
         'crop_width_start': None,
         'crop_width_end': None,
-        'max_shift_height': 3,
-        'max_shift_width': 3,
+        'max_rigid_shift': 3,
         'device': 'cpu',
         'frame_batch_size': 1024,
     }
