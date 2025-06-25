@@ -24,8 +24,9 @@ def train_denoiser(cfg: DictConfig) -> None:
     my_data = input_file['moco']
     my_shifts = input_file['shifts']
     max_shifts = np.ceil(np.amax(np.abs(my_shifts), axis = 0))
+    max_shifts = [int(i) for i in max_shifts]
 
-    display("The max height shift was at most {max_shifts[0]} and the max width was at most {max_shifts[1]}."
+    display(f"The max height shift was at most {max_shifts[0]} and the max width was at most {max_shifts[1]}."
             "Cropping the borders appropriately")
     my_data = my_data[:, max_shifts[0]:-1*max_shifts[0], max_shifts[1]:-1*max_shifts[1]]
     display(f"post crop the shape is {my_data.shape}")
@@ -51,7 +52,7 @@ def train_denoiser(cfg: DictConfig) -> None:
                                                                                    max_epochs=cfg.epochs,
                                                                                    batch_size=128,
                                                                                    learning_rate=cfg.learning_rate)
-    save_path = os.path.abspath(os.path.join(cfg.outdir))
+    save_path = os.path.abspath(os.path.join(cfg.output_file))
     np.savez(save_path, model=trained_model)
     display("Results saved successfully")
 

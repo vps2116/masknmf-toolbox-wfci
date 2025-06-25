@@ -25,8 +25,9 @@ def compress_and_denoise(cfg: DictConfig) -> None:
     my_data = input_file['moco']
     my_shifts = input_file['shifts']
     max_shifts = np.ceil(np.amax(np.abs(my_shifts), axis=0))
+    max_shifts = [int(i) for i in max_shifts]
 
-    display("The max height shift was at most {max_shifts[0]} and the max width was at most {max_shifts[1]}."
+    display(f"The max height shift was at most {max_shifts[0]} and the max width was at most {max_shifts[1]}."
             "Cropping the borders appropriately")
     my_data = my_data[:, max_shifts[0]:-1 * max_shifts[0], max_shifts[1]:-1 * max_shifts[1]]
     display(f"post crop the shape is {my_data.shape}")
@@ -71,11 +72,11 @@ def compress_and_denoise(cfg: DictConfig) -> None:
     display(
         f"Processing complete. The rank of PMD with denoiser is {pmd_denoised.pmd_rank}. The rank of PMD without denoiser is {pmd_no_denoise.pmd_rank}")
 
-    outdir = os.path.abspath(cfg.outdir)
+    outdir = os.path.abspath(cfg.output)
     if os.path.isdir(outdir):
-        output_location = os.path.join(os.path.abspath(cfg.outdir), "pmd_results.npz")
+        output_location = os.path.join(os.path.abspath(cfg.output), "pmd_results.npz")
     else:
-        output_location = cfg.outdir
+        output_location = cfg.output
 
     # From this, it is easy to load the results into a notebook, visualize things, etc.sl
     np.savez(output_location,
