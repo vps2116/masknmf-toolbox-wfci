@@ -13,5 +13,5 @@ python train_blindspot_net.py npz_path=./results/motion_correction_results.npz o
 Run Compression
 
 ```
-python compress_and_denoise.py input=./results/motion_correction_results.npz  output=./results/compression_t1.npz neural_network=./results/neural_net.npz device=cud
+python compress_and_denoise.py input=./results/motion_correction_results.npz  output=./results/compression_t1.npz neural_network=./results/neural_net.npz device=cuda
 ```

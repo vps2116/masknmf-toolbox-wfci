@@ -92,7 +92,7 @@ if __name__ == "__main__":
         'output': '/path/to/output.npz',
         'block_size_dim1': 32,
         'block_size_dim2': 32,
-        'background_rank': 15,
+        'background_rank': 0,
         'max_components': 20,
         'max_consecutive_failures': 1,
         'spatial_avg_factor': 1,
