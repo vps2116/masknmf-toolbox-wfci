@@ -270,31 +270,30 @@ class FluctuatingBackgroundArray(FactorizedVideo):
 
     def __init__(
         self,
-        fov_shape: tuple[int, int],
+        fov_shape: Tuple[int, int],
         order: str,
         u: torch.sparse_coo_tensor,
-        q: torch.tensor,
-        v: torch.tensor,
+        a: torch.tensor,
+        b: torch.tensor,
     ):
         """
-        The background movie can be factorized as the matrix product (u)(r)(q)(v),
-        where u, r, and v are the standard matrices from the pmd decomposition,
+        The background movie can be factorized as the matrix product Uab,
+        where u, and v are the standard matrices from the pmd decomposition,
         Args:
             fov_shape (tuple): (fov_dim1, fov_dim2)
             order (str): Order to reshape arrays from 1D to 2D
             u (torch.sparse_coo_tensor): shape (pixels, rank1)
-            r (torch.tensor): shape (rank1, rank2)
-            q (torch.tensor): shape (rank 2, rank 2)
-            v (torch.tensor): shape (rank2, frames)
+            a (torch.tensor): shape (PMD rank, background_rank)
+            b (torch.tensor): shape (background_rank, num_frames)
         """
-        t = v.shape[1]
+        t = b.shape[1]
         self._shape = (t,) + fov_shape
 
         self._u = u
-        self._v = v
-        self._q = q
+        self._b = b
+        self._a= a
 
-        if not (self.u.device == self.v.device == self.q.device):
+        if not (self.u.device == self.a.device == self.b.device):
             raise ValueError(f"Some input tensors are not on the same device")
         self._device = self.u.device
         self.pixel_mat = np.arange(np.prod(self.shape[1:])).reshape(
@@ -312,12 +311,12 @@ class FluctuatingBackgroundArray(FactorizedVideo):
         return self._u
 
     @property
-    def q(self) -> torch.tensor:
-        return self._q
+    def a(self) -> torch.tensor:
+        return self._a
 
     @property
-    def v(self) -> torch.tensor:
-        return self._v
+    def b(self) -> torch.tensor:
+        return self._b
 
     @property
     def dtype(self) -> str:
@@ -347,7 +346,6 @@ class FluctuatingBackgroundArray(FactorizedVideo):
         """
         return len(self.shape)
 
-    # @functools.lru_cache(maxsize=global_lru_cache_maxsize)
     def getitem_tensor(
         self,
         item: Union[int, list, np.ndarray, Tuple[Union[int, np.ndarray, slice, range]]],
@@ -413,9 +411,9 @@ class FluctuatingBackgroundArray(FactorizedVideo):
             )
 
         # Step 3: Now slice the data with frame_indexer (careful: if the ndims has shrunk, add a dim)
-        v_crop = self._v[:, frame_indexer]
-        if v_crop.ndim < self._v.ndim:
-            v_crop = v_crop.unsqueeze(1)
+        b_crop = self.b[:, frame_indexer]
+        if b_crop.ndim < self.b.ndim:
+            b_crop = b_crop.unsqueeze(1)
 
         # Step 4: Deal with remaining indices after lazy computing the frame(s)
         if isinstance(item, tuple) and test_spatial_crop_effect(
@@ -432,12 +430,12 @@ class FluctuatingBackgroundArray(FactorizedVideo):
             used_order = self.order
 
         # Temporal term is guaranteed to have nonzero "T" dimension below
-        if np.prod(implied_fov) <= v_crop.shape[1]:
-            product = torch.sparse.mm(u_crop, self._q)
-            product = torch.matmul(product, v_crop)
+        if np.prod(implied_fov) <= b_crop.shape[1]:
+            product = torch.sparse.mm(u_crop, self.a)
+            product = torch.matmul(product, b_crop)
 
         else:
-            product = torch.matmul(self._q, v_crop)
+            product = torch.matmul(self.a, b_crop)
             product = torch.sparse.mm(u_crop, product)
 
         if used_order == "F":
@@ -776,7 +774,7 @@ class ResidualCorrelationImages(FactorizedVideo):
         self,
         u_sparse: torch.sparse_coo_tensor,
         v: torch.tensor,
-        factorized_ring_term: torch.tensor,
+        factorized_ring_term: Tuple[torch.tensor, torch.tensor],
         a: torch.sparse_coo_tensor,
         c: torch.tensor,
         support_correlation_values: torch.sparse_coo_tensor,
@@ -799,6 +797,7 @@ class ResidualCorrelationImages(FactorizedVideo):
         Args:
             u_sparse (torch.sparse_coo_tensor): shape (pixels, rank 1)
             v (torch.tensor): shape (rank 2, frames)
+            factorized_ring_term (Tuple[torch.tensor, torch.tensor]): A factorized representation of the data background
             a (torch.sparse_coo_tensor): shape (pixels, number of neural signals). Spatial components
             c (torch.tensor): shape (frames, number of neural signals). This is the temporal traces matrix
             support_correlation_values (torch.sparse_coo_tensor): Shape (pixels, number of neural signals). The i-th
@@ -815,7 +814,8 @@ class ResidualCorrelationImages(FactorizedVideo):
             == v.device
             == c.device
             == a.device
-            == factorized_ring_term.device
+            == factorized_ring_term[0].device
+            == factorized_ring_term[1].device
             == support_correlation_values.device
             == residual_movie_mean.device
             == residual_movie_normalizer.device
@@ -825,11 +825,7 @@ class ResidualCorrelationImages(FactorizedVideo):
         self._device = u_sparse.device
         self._u = u_sparse
         self._v = v
-        self._factorized_ring_term = factorized_ring_term
-        self._background_subtracted_term = (
-            torch.eye(self._u.shape[1], device=self.device, dtype=torch.float)
-            - self._factorized_ring_term
-        )
+        self._background_term = factorized_ring_term
         self._c = c
         self._c_norm = self._c - torch.mean(self._c, dim=0, keepdim=True)
         self._c_norm = self._c_norm / torch.linalg.norm(
@@ -885,6 +881,14 @@ class ResidualCorrelationImages(FactorizedVideo):
     @property
     def support_correlation_values(self) -> torch.sparse_coo_tensor:
         return self._support_correlation_values
+
+    @property
+    def residual_movie_mean(self) -> torch.tensor:
+        return self._residual_movie_mean
+
+    @property
+    def residual_movie_normalizer(self) -> torch.tensor:
+        return self._residual_movie_normalizer
 
     @property
     def order(self) -> str:
@@ -967,7 +971,7 @@ class ResidualCorrelationImages(FactorizedVideo):
         if c_crop.ndim < self._c_norm.ndim:
             c_crop = c_crop.unsqueeze(1)
 
-        v_crop = self._v @ c_crop
+        v_crop = self._v @ c_crop - (self._background_term[0] @ (self._background_term[1] @ c_crop))
         cc_crop = self._c.T @ c_crop
         selected_neurons = self._index_values[frame_indexer]
         if selected_neurons.ndim < 1:
@@ -1002,16 +1006,15 @@ class ResidualCorrelationImages(FactorizedVideo):
             used_order = self.order
 
         # Temporal term is guaranteed to have nonzero "T" dimension below
+        ## TODO: If you only had 2 matrices in the factorization, this if/else is useless. But eventually background term will be its own factorization. So keep this for now.
         if np.prod(implied_fov) <= v_crop.shape[1]:
-            product = torch.sparse.mm(u_crop, self._background_subtracted_term)
-            product = torch.matmul(product, v_crop)
+            product = torch.sparse.mm(u_crop, v_crop)
             product -= mean_crop.unsqueeze(1) @ torch.sum(c_crop, dim=0, keepdim=True)
             product -= torch.sparse.mm(a_crop, cc_crop)
             product /= movie_normalizer_crop.unsqueeze(1)
 
         else:
-            product = self._background_subtracted_term @ v_crop
-            product = torch.sparse.mm(u_crop, product)
+            product = torch.sparse.mm(u_crop, v_crop)
             product -= torch.sparse.mm(a_crop, cc_crop)
             product -= mean_crop.unsqueeze(1) @ torch.sum(c_crop, dim=0, keepdim=True)
 
@@ -1074,7 +1077,8 @@ class StandardCorrelationImages(FactorizedVideo):
         self._device = u_sparse.device
         self._u = u_sparse
         self._v = v
-        self._c = c
+        self._c = None
+        self.c = c # All temporal data goes through the setter to get normalized
         self._movie_mean = movie_mean
         self._movie_normalizer = movie_normalizer
         self._fov_dims = (fov_dims[0], fov_dims[1])
@@ -1116,6 +1120,14 @@ class StandardCorrelationImages(FactorizedVideo):
     @property
     def shape(self) -> Tuple[int, int, int]:
         return self.c.shape[1], self._fov_dims[0], self._fov_dims[1]
+
+    @property
+    def movie_mean(self) -> torch.tensor:
+        return self._movie_mean
+
+    @property
+    def movie_normalizer(self) -> torch.tensor:
+        return self._movie_normalizer
 
     @property
     def order(self) -> str:
@@ -1254,11 +1266,13 @@ class DemixingResults:
         b: torch.tensor,
         residual_correlation_image: ResidualCorrelationImages,
         standard_correlation_image: StandardCorrelationImages,
+        background_to_signal_correlation_image: StandardCorrelationImages,
         order: str,
         data_shape: tuple[int, int, int],
         device="cpu",
     ):
         """
+        This class provides a convenient way to export all demixing result as array-like objects.
         Args:
             u_sparse (torch.sparse_coo_tensor): shape (pixels, rank 1)
             q (torch.tensor): shape (rank 2, rank 2)
@@ -1267,8 +1281,9 @@ class DemixingResults:
             c (torch.tensor): shape (number of frames, number of neural signals)
             b (torch.tensor): shape (pixels)
             residual_correlation_image (ResidualCorrelationImages): Shape (number of neural signals, FOV dim 1, FOV dim 2)
+                The residual corr img corresponding to these demixing results
             standard_correlation_image (StandardCorrelationImages): Shape (number of neural signals,
-                FOV dim 1, FOV dim 2)
+                FOV dim 1, FOV dim 2): The standard corr img corresponding to these demixing results
             order (str): order used to reshape data from 2D to 1D
             data_shape (tuple): (number of frames, field of view dimension 1, field of view dimension 2)
             device (str): 'cpu' or 'cuda'. used to manage where the tensors reside
@@ -1277,26 +1292,64 @@ class DemixingResults:
         self._order = order
         self._shape = data_shape
         self._u_sparse = u_sparse.to(device)
-        self._q = q.to(device)
-        self._v = v.to(device)
-        self._a = a.to(device)
-        self._c = c.to(device)
-        self._residual_correlation_image = residual_correlation_image
-        self._standard_correlation_image = standard_correlation_image
+        self._q = q
+        self._v = v
+        self._a = a
+        self._c = c
+
+        ## Store the critical values for each of these
+        self._std_corr_img_mean = standard_correlation_image.movie_mean
+        self._std_corr_img_normalizer = standard_correlation_image.movie_normalizer
+
+        self._bkgd_std_corr_img_mean = background_to_signal_correlation_image.movie_mean
+        self._bkgd_std_corr_img_normalizer = background_to_signal_correlation_image.movie_normalizer
+
+        self._resid_corr_img_support_values = residual_correlation_image.support_correlation_values
+        self._resid_corr_img_mean = residual_correlation_image.residual_movie_mean
+        self._resid_corr_img_normalizer = residual_correlation_image.residual_movie_normalizer
+
         if self.order == "C":
-            self._baseline = b.reshape((self.shape[1], self.shape[2])).to(self.device)
+            self._baseline = b.reshape((self.shape[1], self.shape[2]))
         elif self.order == "F":
             # Note we swap 1 and 2 here
-            self._baseline = b.reshape((self.shape[2], self.shape[1])).T.to(self.device)
+            self._baseline = b.reshape((self.shape[2], self.shape[1])).T
+
+        #Move all tracked tensors to desired location so everything is on one device
+        self.to(device)
 
     @property
     def standard_correlation_image(self) -> StandardCorrelationImages:
-        return self._standard_correlation_image
+        return StandardCorrelationImages(self._u_sparse,
+                                         self._v,
+                                         self._c,
+                                         self._std_corr_img_mean,
+                                         self._std_corr_img_normalizer,
+                                         (self._shape[1], self._shape[2]),
+                                         order=self.order)
+
+    @property
+    def background_to_signal_correlation_image(self) -> StandardCorrelationImages:
+        return StandardCorrelationImages(self._u_sparse,
+                                         self._q[0] @ self._q[1],
+                                         self._c,
+                                         self._bkgd_std_corr_img_mean,
+                                         self._bkgd_std_corr_img_normalizer,
+                                         (self._shape[1], self._shape[2]),
+                                         order=self.order)
 
     @property
     def residual_correlation_image(self) -> ResidualCorrelationImages:
-        return self._residual_correlation_image
-
+        return ResidualCorrelationImages(self._u_sparse,
+                                         self._v,
+                                         self._q,
+                                         self._a,
+                                         self._c,
+                                         self._resid_corr_img_support_values,
+                                         self._resid_corr_img_mean,
+                                         self._resid_corr_img_normalizer,
+                                         (self._shape[1], self._shape[2]),
+                                         mode=ResidCorrMode.RESIDUAL,
+                                         order=self._order)
     @property
     def shape(self):
         return self._shape
@@ -1312,11 +1365,20 @@ class DemixingResults:
     def to(self, new_device):
         self._device = new_device
         self._u_sparse = self._u_sparse.to(self.device)
-        self._q = self._q.to(self.device)
+        self._q = (self._q[0].to(self.device), self._q[1].to(self.device))
         self._v = self._v.to(self.device)
         self._a = self._a.to(self.device)
         self._c = self._c.to(self.device)
         self._baseline = self.baseline.to(self.device)
+        self._std_corr_img_mean = self._std_corr_img_mean.to(self.device)
+        self._std_corr_img_normalizer = self._std_corr_img_normalizer.to(self.device)
+
+        self._bkgd_std_corr_img_mean = self._bkgd_std_corr_img_mean.to(self.device)
+        self._bkgd_std_corr_img_normalizer = self._bkgd_std_corr_img_normalizer.to(self.device)
+
+        self._resid_corr_img_support_values = self._resid_corr_img_support_values.to(self.device)
+        self._resid_corr_img_mean = self._resid_corr_img_mean.to(self.device)
+        self._resid_corr_img_normalizer = self._resid_corr_img_normalizer.to(self.device)
 
     @property
     def fov_shape(self) -> Tuple[int, int]:
@@ -1377,11 +1439,10 @@ class DemixingResults:
     @property
     def fluctuating_background_array(self) -> FluctuatingBackgroundArray:
         """
-        Returns a FluctuatingBackgroundArray using the tensors stored in this object
+        TODO: When the refactor is complete, need to return once again a Fluctuating Background Array
+        Returns a PMDArray using the tensors stored in this object
         """
-        return FluctuatingBackgroundArray(
-            self.fov_shape, self.order, self.u, self.q, self.v
-        )
+        return FluctuatingBackgroundArray(self.fov_shape, self.order, self.u, self.q[0], self.q[1])
 
     @property
     def residual_array(self) -> ResidualArray:
